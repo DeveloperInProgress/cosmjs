@@ -4,7 +4,9 @@ import {
   JsonRpcSuccessResponse,
   parseJsonRpcResponse,
 } from "@cosmjs/json-rpc";
-import axios from "axios";
+import axios, { AxiosInstance, AxiosError } from 'axios';
+import http from 'http';
+import https from 'https';
 
 import { hasProtocol, RpcClient } from "./rpcclient";
 
@@ -25,30 +27,19 @@ function filterBadStatus(res: any): any {
  * For some reason, fetch does not complain about missing server-side CORS support.
  */
 // eslint-disable-next-line @typescript-eslint/explicit-module-boundary-types
-export async function http(
-  method: "POST",
-  url: string,
-  headers: Record<string, string> | undefined,
+export async function httpRequest(
+  connection: AxiosInstance,
   request?: any,
 ): Promise<any> {
-  if (typeof fetch !== "undefined") {
-    const settings = {
-      method: method,
-      body: request ? JSON.stringify(request) : undefined,
-      headers: {
-        // eslint-disable-next-line @typescript-eslint/naming-convention
-        "Content-Type": "application/json",
-        ...headers,
-      },
-    };
-    return fetch(url, settings)
-      .then(filterBadStatus)
-      .then((res: any) => res.json());
-  } else {
-    return axios
-      .request({ url: url, method: method, data: request, headers: headers })
-      .then((res) => res.data);
-  }
+
+  const {data} = await connection.post(
+    '/',
+    {
+      data: request
+    }
+  )
+
+  return data;
 }
 
 export interface HttpEndpoint {
@@ -68,6 +59,7 @@ export interface HttpEndpoint {
 export class HttpClient implements RpcClient {
   protected readonly url: string;
   protected readonly headers: Record<string, string> | undefined;
+  connection: AxiosInstance;
 
   public constructor(endpoint: string | HttpEndpoint) {
     if (typeof endpoint === "string") {
@@ -77,6 +69,14 @@ export class HttpClient implements RpcClient {
       this.url = endpoint.url;
       this.headers = endpoint.headers;
     }
+    const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 10 });
+    const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 10 });
+    this.connection = axios.create({
+      httpAgent,
+      httpsAgent,
+      baseURL: this.url,
+      headers: this.headers
+    });
   }
 
   public disconnect(): void {
@@ -84,7 +84,7 @@ export class HttpClient implements RpcClient {
   }
 
   public async execute(request: JsonRpcRequest): Promise<JsonRpcSuccessResponse> {
-    const response = parseJsonRpcResponse(await http("POST", this.url, this.headers, request));
+    const response = parseJsonRpcResponse(await httpRequest(this.connection, request));
     if (isJsonRpcErrorResponse(response)) {
       throw new Error(JSON.stringify(response.error));
     }
